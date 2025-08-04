@@ -98,16 +98,34 @@ Edit `config.py` to modify:
 
 The tool generates several output files:
 
-1. **`data_comparison_report_full_[timestamp].html`**: Interactive HTML report with professional UI
+1. **`reports/data_comparison_report_full_[timestamp].html`**: Interactive HTML report with professional UI
 2. **`sample_report.html`**: Sample report demonstrating all features and functionality
-3. **`data_comparison_test.log`**: Execution logs with detailed information
+3. **`logs/data_comparison_test.log`**: Execution logs with detailed information
 
 ### 📋 Sample Report
 Check out `sample_report.html` to see a complete example of the generated report with:
-- Missing records analysis with actual data
+- Missing records analysis with actual data (Record ID, Created Date, Last Modified)
 - Field-by-field comparison results
 - Interactive dashboard and collapsible sections
 - Dark/light mode functionality
+- Professional header with database names
+- Bidirectional missing records detection
+
+### 📁 Folder Structure
+```
+Red-Shift-Data-Validation-System/
+├── data_comparison_full.py    # Main comparison script
+├── config.py                  # Database configuration
+├── requirements.txt           # Python dependencies
+├── sample_report.html         # Sample report for demonstration
+├── reports/                   # Generated reports folder
+│   └── data_comparison_report_full_*.html
+├── logs/                      # Execution logs folder
+│   └── data_comparison_test.log
+├── run_comparison.sh          # Linux/Mac execution script
+├── run_comparison.bat         # Windows execution script
+└── README.md                  # This documentation
+```
 
 ## Report Structure
 

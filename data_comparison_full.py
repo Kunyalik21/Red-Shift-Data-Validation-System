@@ -28,7 +28,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('data_comparison_test.log'),
+        logging.FileHandler('logs/data_comparison_test.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -354,17 +354,32 @@ class DatabaseComparator:
             
             pk_column = 'id' if 'id' in common_columns else common_columns[0]
             
-            # Check if last_modified_time exists for timestamps
+            # Check if last_modified_time and created_time exist for timestamps
             timestamp_column = None
-            for col in ['last_modified_time', 'updated_at', 'modified_date', 'last_modified']:
+            created_time_column = None
+            
+            # Enhanced column detection for last modified
+            for col in ['last_modified_time', 'updated_at', 'modified_date', 'last_modified', 'modified_time', 'update_time']:
                 if col in common_columns:
                     timestamp_column = col
                     break
+            
+            # Enhanced column detection for creation date
+            for col in ['creation_time', 'created_time', 'created_at', 'creation_date', 'created', 'create_time', 'insert_time', 'created_date']:
+                if col in common_columns:
+                    created_time_column = col
+                    break
+            
+            # Log column detection results
+            logger.info(f"Found timestamp column: {timestamp_column}")
+            logger.info(f"Found created_time column: {created_time_column}")
             
             # Get all IDs from MySQL
             mysql_query = f"SELECT {pk_column}"
             if timestamp_column:
                 mysql_query += f", {timestamp_column}"
+            if created_time_column:
+                mysql_query += f", {created_time_column}"
             mysql_query += f" FROM {table_name} ORDER BY {pk_column}"
             
             mysql_cursor = self.mysql_conn.cursor()
@@ -376,6 +391,8 @@ class DatabaseComparator:
             redshift_query = f"SELECT {pk_column}"
             if timestamp_column:
                 redshift_query += f", {timestamp_column}"
+            if created_time_column:
+                redshift_query += f", {created_time_column}"
             redshift_query += f" FROM {table_name} ORDER BY {pk_column}"
             
             redshift_cursor = self.redshift_conn.cursor()
@@ -404,6 +421,10 @@ class DatabaseComparator:
                     record_data['last_modified'] = str(mysql_data[record_id][1]) if mysql_data[record_id][1] else 'N/A'
                 else:
                     record_data['last_modified'] = 'N/A'
+                if created_time_column and len(mysql_data[record_id]) > 2:
+                    record_data['created_date'] = str(mysql_data[record_id][2]) if mysql_data[record_id][2] else 'N/A'
+                else:
+                    record_data['created_date'] = 'N/A'
                 missing_records['missing_in_redshift'].append(record_data)
             
             for record_id in list(missing_in_mysql_ids)[:max_show]:
@@ -412,6 +433,10 @@ class DatabaseComparator:
                     record_data['last_modified'] = str(redshift_data[record_id][1]) if redshift_data[record_id][1] else 'N/A'
                 else:
                     record_data['last_modified'] = 'N/A'
+                if created_time_column and len(redshift_data[record_id]) > 2:
+                    record_data['created_date'] = str(redshift_data[record_id][2]) if redshift_data[record_id][2] else 'N/A'
+                else:
+                    record_data['created_date'] = 'N/A'
                 missing_records['missing_in_mysql'].append(record_data)
             
             missing_records['total_missing_in_redshift'] = len(missing_in_redshift_ids)
@@ -1515,8 +1540,6 @@ class DatabaseComparator:
             <div class="subtitle">MySQL ↔ Redshift Comprehensive Analysis</div>
             <div class="subtitle"><strong>MySQL Database:</strong> {self.mysql_config['database']} | <strong>Redshift Database:</strong> {self.redshift_config['database']}</div>
             <div class="subtitle">Generated: {report['timestamp']}</div>
-            <div class="subtitle">Analysis Period: All Data</div>
-            <div class="subtitle"><strong>Processing: ALL RECORDS</strong> (Optimized for Large Datasets)</div>
         </div>
 
         <!-- Overall System Health Dashboard -->
@@ -1805,6 +1828,7 @@ class DatabaseComparator:
                             <table class="missing-table">
                                 <tr>
                                     <th><i class="fas fa-key"></i> Record ID</th>
+                                    <th><i class="fas fa-calendar-plus"></i> Created Date</th>
                                     <th><i class="fas fa-clock"></i> Last Modified</th>
                                 </tr>
 """
@@ -1813,6 +1837,7 @@ class DatabaseComparator:
                             html_content += f"""
                                 <tr>
                                     <td>{record['record_id']}</td>
+                                    <td>{record['created_date']}</td>
                                     <td>{record['last_modified']}</td>
                                 </tr>
 """
@@ -1840,6 +1865,7 @@ class DatabaseComparator:
                             <table class="missing-table">
                                 <tr>
                                     <th><i class="fas fa-key"></i> Record ID</th>
+                                    <th><i class="fas fa-calendar-plus"></i> Created Date</th>
                                     <th><i class="fas fa-clock"></i> Last Modified</th>
                                 </tr>
 """
@@ -1848,6 +1874,7 @@ class DatabaseComparator:
                             html_content += f"""
                                 <tr>
                                     <td>{record['record_id']}</td>
+                                    <td>{record['created_date']}</td>
                                     <td>{record['last_modified']}</td>
                                 </tr>
 """
@@ -2238,7 +2265,7 @@ class DatabaseComparator:
             
             # Save enhanced HTML report
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            html_file = f'data_comparison_report_full_{timestamp}.html'
+            html_file = f'reports/data_comparison_report_full_{timestamp}.html'
             self.generate_enhanced_html_report(report, html_file)
             
             logger.info(f"Enhanced HTML report saved to: {html_file}")
