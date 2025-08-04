@@ -45,9 +45,12 @@ ehthumbs.db
 Thumbs.db
 
 # Generated reports
-data_comparison_report_*.html
+data_comparison_report_full_*.html
 data_comparison_summary_*.txt
 *.log
+
+# Keep sample report
+!sample_report.html
 
 # Screenshots
 *.png

@@ -331,6 +331,99 @@ class DatabaseComparator:
         
         return comparison_result
     
+    def find_missing_records(self, table_name: str) -> Dict[str, Any]:
+        """Find records that exist in one database but not the other"""
+        logger.info(f"Finding missing records for {table_name}")
+        
+        missing_records = {
+            'missing_in_redshift': [],
+            'missing_in_mysql': [],
+            'total_missing_in_redshift': 0,
+            'total_missing_in_mysql': 0
+        }
+        
+        try:
+            # Get primary key column
+            mysql_columns = self.get_table_schema(table_name, 'mysql')
+            redshift_columns = self.get_table_schema(table_name, 'redshift')
+            common_columns = list(set(mysql_columns) & set(redshift_columns))
+            
+            if not common_columns:
+                logger.warning(f"No common columns found for {table_name}")
+                return missing_records
+            
+            pk_column = 'id' if 'id' in common_columns else common_columns[0]
+            
+            # Check if last_modified_time exists for timestamps
+            timestamp_column = None
+            for col in ['last_modified_time', 'updated_at', 'modified_date', 'last_modified']:
+                if col in common_columns:
+                    timestamp_column = col
+                    break
+            
+            # Get all IDs from MySQL
+            mysql_query = f"SELECT {pk_column}"
+            if timestamp_column:
+                mysql_query += f", {timestamp_column}"
+            mysql_query += f" FROM {table_name} ORDER BY {pk_column}"
+            
+            mysql_cursor = self.mysql_conn.cursor()
+            mysql_cursor.execute(mysql_query)
+            mysql_records = mysql_cursor.fetchall()
+            mysql_cursor.close()
+            
+            # Get all IDs from Redshift
+            redshift_query = f"SELECT {pk_column}"
+            if timestamp_column:
+                redshift_query += f", {timestamp_column}"
+            redshift_query += f" FROM {table_name} ORDER BY {pk_column}"
+            
+            redshift_cursor = self.redshift_conn.cursor()
+            redshift_cursor.execute(redshift_query)
+            redshift_records = redshift_cursor.fetchall()
+            redshift_cursor.close()
+            
+            # Convert to sets for comparison (using just the ID for set operations)
+            mysql_ids = {record[0] for record in mysql_records}
+            redshift_ids = {record[0] for record in redshift_records}
+            
+            # Create dictionaries for timestamp lookup
+            mysql_data = {record[0]: record for record in mysql_records}
+            redshift_data = {record[0]: record for record in redshift_records}
+            
+            # Find missing records
+            missing_in_redshift_ids = mysql_ids - redshift_ids
+            missing_in_mysql_ids = redshift_ids - mysql_ids
+            
+            # Prepare missing records data with timestamps (limited for performance)
+            max_show = self.test_config.get('max_missing_records_to_show', 50)
+            
+            for record_id in list(missing_in_redshift_ids)[:max_show]:
+                record_data = {'record_id': str(record_id)}
+                if timestamp_column and len(mysql_data[record_id]) > 1:
+                    record_data['last_modified'] = str(mysql_data[record_id][1]) if mysql_data[record_id][1] else 'N/A'
+                else:
+                    record_data['last_modified'] = 'N/A'
+                missing_records['missing_in_redshift'].append(record_data)
+            
+            for record_id in list(missing_in_mysql_ids)[:max_show]:
+                record_data = {'record_id': str(record_id)}
+                if timestamp_column and len(redshift_data[record_id]) > 1:
+                    record_data['last_modified'] = str(redshift_data[record_id][1]) if redshift_data[record_id][1] else 'N/A'
+                else:
+                    record_data['last_modified'] = 'N/A'
+                missing_records['missing_in_mysql'].append(record_data)
+            
+            missing_records['total_missing_in_redshift'] = len(missing_in_redshift_ids)
+            missing_records['total_missing_in_mysql'] = len(missing_in_mysql_ids)
+            
+            logger.info(f"Found {len(missing_in_redshift_ids)} records missing in Redshift, {len(missing_in_mysql_ids)} missing in MySQL")
+            
+        except Exception as e:
+            logger.error(f"Error finding missing records for {table_name}: {e}")
+        
+        return missing_records
+    
     def generate_enhanced_html_report(self, report: Dict[str, Any], filename: str):
         """Generate the enhanced HTML report with ALL your requirements"""
         
@@ -1241,6 +1334,97 @@ class DatabaseComparator:
             font-size: 0.9em;
         }}
 
+        /* Missing Records Styles */
+        .missing-records-section {{
+            margin-top: 20px;
+        }}
+        
+        .missing-records-card {{
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }}
+        
+        .missing-header {{
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--error-light);
+            border-bottom: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }}
+        
+        .missing-header:hover {{
+            background: var(--bg-tertiary) !important;
+            color: var(--text-primary) !important;
+        }}
+        
+        .missing-header h4 {{
+            margin: 0;
+            color: var(--error-color);
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        
+        .missing-header .subtitle {{
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-left: 24px;
+        }}
+        
+        .missing-content {{
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            background: var(--bg-primary);
+        }}
+        
+        .missing-content.active {{
+            max-height: 500px;
+            overflow-y: auto;
+        }}
+        
+        .missing-info {{
+            padding: 10px 20px;
+            background: var(--bg-tertiary);
+            font-size: 12px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-color);
+        }}
+        
+        .missing-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        
+        .missing-table th,
+        .missing-table td {{
+            padding: 8px 20px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 13px;
+        }}
+        
+        .missing-table th {{
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--text-primary);
+        }}
+        
+        .missing-table td {{
+            color: var(--text-secondary);
+        }}
+        
+        .missing-table tr:hover {{
+            background: var(--bg-tertiary);
+        }}
+
         /* Floating Action Buttons */
         .floating-controls {{
             position: fixed;
@@ -1356,9 +1540,14 @@ class DatabaseComparator:
                     <div class="subtitle">Target Database</div>
                 </div>
                 <div class="card {'error' if report['summary']['total_missing_in_redshift'] > 0 else 'excellent'}">
-                    <h3><i class="fas fa-exclamation-triangle"></i> Missing Records</h3>
+                    <h3><i class="fas fa-exclamation-triangle"></i> Missing in Redshift</h3>
                     <div class="value">{report['summary']['total_missing_in_redshift']}</div>
-                    <div class="subtitle">In Redshift</div>
+                    <div class="subtitle">Records in MySQL only</div>
+                </div>
+                <div class="card {'error' if report['summary']['total_missing_in_mysql'] > 0 else 'excellent'}">
+                    <h3><i class="fas fa-exclamation-triangle"></i> Missing in MySQL</h3>
+                    <div class="value">{report['summary']['total_missing_in_mysql']}</div>
+                    <div class="subtitle">Records in Redshift only</div>
                 </div>
             </div>
         </div>
@@ -1586,6 +1775,92 @@ class DatabaseComparator:
                 </div>
 """
             
+            # Add missing records section
+            if 'missing_records' in table_data:
+                missing_data = table_data['missing_records']
+                total_missing_redshift = missing_data['total_missing_in_redshift']
+                total_missing_mysql = missing_data['total_missing_in_mysql']
+                
+                if total_missing_redshift > 0 or total_missing_mysql > 0:
+                    html_content += f"""
+                <h3><i class="fas fa-search"></i> Missing Records Analysis</h3>
+                <div class="missing-records-section">
+"""
+                    
+                    # Missing in Redshift (present in MySQL only)
+                    if total_missing_redshift > 0:
+                        missing_in_redshift = missing_data['missing_in_redshift']
+                        showing_count = len(missing_in_redshift)
+                        
+                        html_content += f"""
+                    <div class="missing-records-card error">
+                        <div class="missing-header" onclick="toggleMissingRecords('{table_name}_missing_redshift')">
+                            <h4><i class="fas fa-exclamation-triangle"></i> Missing in Redshift ({total_missing_redshift:,} records)</h4>
+                            <span class="subtitle">Records present in MySQL but missing in Redshift</span>
+                            <i class="fas fa-chevron-down chevron" id="{table_name}_missing_redshift_chevron"></i>
+                        </div>
+                        <div class="missing-content" id="{table_name}_missing_redshift_content">
+                            <div class="missing-info">Showing {showing_count} of {total_missing_redshift:,} missing records</div>
+                            <table class="missing-table">
+                                <tr>
+                                    <th><i class="fas fa-key"></i> Record ID</th>
+                                    <th><i class="fas fa-clock"></i> Last Modified</th>
+                                </tr>
+"""
+                        
+                        for record in missing_in_redshift:
+                            html_content += f"""
+                                <tr>
+                                    <td>{record['record_id']}</td>
+                                    <td>{record['last_modified']}</td>
+                                </tr>
+"""
+                        
+                        html_content += """
+                            </table>
+                        </div>
+                    </div>
+"""
+                    
+                    # Missing in MySQL (present in Redshift only)
+                    if total_missing_mysql > 0:
+                        missing_in_mysql = missing_data['missing_in_mysql']
+                        showing_count = len(missing_in_mysql)
+                        
+                        html_content += f"""
+                    <div class="missing-records-card error">
+                        <div class="missing-header" onclick="toggleMissingRecords('{table_name}_missing_mysql')">
+                            <h4><i class="fas fa-exclamation-triangle"></i> Missing in MySQL ({total_missing_mysql:,} records)</h4>
+                            <span class="subtitle">Records present in Redshift but missing in MySQL</span>
+                            <i class="fas fa-chevron-down chevron" id="{table_name}_missing_mysql_chevron"></i>
+                        </div>
+                        <div class="missing-content" id="{table_name}_missing_mysql_content">
+                            <div class="missing-info">Showing {showing_count} of {total_missing_mysql:,} missing records</div>
+                            <table class="missing-table">
+                                <tr>
+                                    <th><i class="fas fa-key"></i> Record ID</th>
+                                    <th><i class="fas fa-clock"></i> Last Modified</th>
+                                </tr>
+"""
+                        
+                        for record in missing_in_mysql:
+                            html_content += f"""
+                                <tr>
+                                    <td>{record['record_id']}</td>
+                                    <td>{record['last_modified']}</td>
+                                </tr>
+"""
+                        
+                        html_content += """
+                            </table>
+                        </div>
+                    </div>
+"""
+                    
+                    html_content += """
+                </div>
+"""
+            
             html_content += """
             </div>
         </div>
@@ -1725,6 +2000,20 @@ class DatabaseComparator:
         function toggleColumn(columnId) {{
             const content = document.getElementById(columnId);
             const chevron = document.getElementById('col-chevron-' + columnId);
+            
+            if (content.classList.contains('active')) {{
+                content.classList.remove('active');
+                if (chevron) chevron.className = 'fas fa-chevron-down';
+            }} else {{
+                content.classList.add('active');
+                if (chevron) chevron.className = 'fas fa-chevron-up';
+            }}
+        }}
+
+        // Missing Records Toggle
+        function toggleMissingRecords(missingId) {{
+            const content = document.getElementById(missingId + '_content');
+            const chevron = document.getElementById(missingId + '_chevron');
             
             if (content.classList.contains('active')) {{
                 content.classList.remove('active');
@@ -1925,12 +2214,15 @@ class DatabaseComparator:
                 table_report = {
                     'record_counts': self.get_record_counts(table_name),
                     'date_scenarios': self.analyze_date_scenarios(table_name),
-                    'field_comparison': self.compare_all_data_with_differences(table_name)
+                    'field_comparison': self.compare_all_data_with_differences(table_name),
+                    'missing_records': self.find_missing_records(table_name)
                 }
                 
                 # Update summary
                 report['summary']['total_mysql_records'] += table_report['record_counts']['mysql_total']
                 report['summary']['total_redshift_records'] += table_report['record_counts']['redshift_total']
+                report['summary']['total_missing_in_redshift'] += table_report['missing_records']['total_missing_in_redshift']
+                report['summary']['total_missing_in_mysql'] += table_report['missing_records']['total_missing_in_mysql']
                 
                 # Check for mismatches
                 has_mismatch = (

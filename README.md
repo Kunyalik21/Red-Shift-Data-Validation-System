@@ -1,17 +1,27 @@
-# Data Comparison Test Tool
+# Red Shift Data Validation System
 
-This tool compares data between MySQL and Redshift databases to identify discrepancies and generate comprehensive reports.
+This tool compares data between MySQL and Redshift databases to identify discrepancies and generate comprehensive interactive reports with professional UI/UX.
 
-## Features
+## 🚀 Features
 
 - **Record Count Comparison**: Compare total records between MySQL and Redshift
 - **Date Scenario Analysis**: Analyze three specific date scenarios:
   1. Creation date & last modified date same (including time)
   2. Creation date & last modified date same but time different  
   3. Creation date & last modified date different
-- **Missing Records Detection**: Find records that exist in one database but not the other
-- **Sample Data Validation**: Compare actual data values for a sample of records
-- **Comprehensive Reporting**: Generate both JSON and human-readable reports
+- **✨ Enhanced Missing Records Detection**: Bidirectional detection of records that exist in one database but not the other
+  - Records missing in Redshift (present in MySQL only)
+  - Records missing in MySQL (present in Redshift only)
+  - Detailed missing records with Record IDs and Last Modified timestamps
+- **Field-by-Field Analysis**: Compare actual data values for ALL records with difference tracking
+- **Interactive HTML Reports**: Professional dashboard with:
+  - 🌓 Dark/Light mode toggle
+  - 📊 Real-time statistics dashboard
+  - 🔍 Search functionality by Record ID
+  - 📤 CSV export capability
+  - 🎯 Collapsible sections for easy navigation
+  - 📱 Responsive design
+  - 🎨 Professional color coding (90%+ green, 75-90% yellow, <75% red)
 
 ## Prerequisites
 
@@ -46,7 +56,7 @@ venv\Scripts\activate.bat  # Windows
 pip install -r requirements.txt
 
 # Run the comparison
-python3 data_comparison_test.py
+python3 data_comparison_full.py
 ```
 
 ## Configuration
@@ -57,6 +67,11 @@ Edit `config.py` to modify:
 - Sample size for data validation
 - Primary key columns (if different from 'id')
 - Column mappings (if column names differ between databases)
+- **UI/UX Settings**:
+  - `max_differences_to_show`: Maximum differences to display per column (default: 50)
+  - `max_missing_records_to_show`: Maximum missing records to display per section (default: 50)
+  - `auto_collapse_columns`: Auto-collapse columns by default (default: True)
+  - `compact_ui_mode`: Use compact card design (default: True)
 
 ## Current Configuration
 
@@ -83,9 +98,16 @@ Edit `config.py` to modify:
 
 The tool generates several output files:
 
-1. **`data_comparison_report_[timestamp].json`**: Detailed JSON report with all comparison data
-2. **`data_comparison_summary_[timestamp].txt`**: Human-readable summary report
+1. **`data_comparison_report_full_[timestamp].html`**: Interactive HTML report with professional UI
+2. **`sample_report.html`**: Sample report demonstrating all features and functionality
 3. **`data_comparison_test.log`**: Execution logs with detailed information
+
+### 📋 Sample Report
+Check out `sample_report.html` to see a complete example of the generated report with:
+- Missing records analysis with actual data
+- Field-by-field comparison results
+- Interactive dashboard and collapsible sections
+- Dark/light mode functionality
 
 ## Report Structure
 
@@ -98,8 +120,12 @@ The tool generates several output files:
 ### Per-Table Analysis:
 - **Record Counts**: Total and filtered (till yesterday) counts
 - **Date Scenarios**: Analysis of the three date scenarios
-- **Missing Records**: IDs of records missing in each database
-- **Sample Comparison**: Data quality validation results
+- **✨ Missing Records Analysis**: Comprehensive bidirectional missing records detection
+  - Records missing in Redshift (present in MySQL only)
+  - Records missing in MySQL (present in Redshift only)
+  - Record IDs with Last Modified timestamps
+  - Collapsible sections for easy viewing
+- **Field-by-Field Comparison**: Complete data quality validation with difference tracking
 
 ## Date Scenarios Explained
 
