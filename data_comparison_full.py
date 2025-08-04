@@ -1513,6 +1513,7 @@ class DatabaseComparator:
             </button>
             <h1><i class="fas fa-chart-line"></i> Data Sync Validation Report</h1>
             <div class="subtitle">MySQL ↔ Redshift Comprehensive Analysis</div>
+            <div class="subtitle"><strong>MySQL Database:</strong> {self.mysql_config['database']} | <strong>Redshift Database:</strong> {self.redshift_config['database']}</div>
             <div class="subtitle">Generated: {report['timestamp']}</div>
             <div class="subtitle">Analysis Period: All Data</div>
             <div class="subtitle"><strong>Processing: ALL RECORDS</strong> (Optimized for Large Datasets)</div>
