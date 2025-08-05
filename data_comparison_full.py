@@ -18,6 +18,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 from typing import Dict, List, Tuple, Any
 import sys
 import os
@@ -33,6 +34,137 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+class QuerySafetyValidator:
+    """Safety validator to ensure only read-only queries are executed"""
+    
+    # Dangerous SQL keywords that modify data
+    DANGEROUS_KEYWORDS = [
+        'DELETE', 'DROP', 'TRUNCATE', 'INSERT', 'UPDATE', 'CREATE', 'ALTER',
+        'GRANT', 'REVOKE', 'EXECUTE', 'EXEC', 'MERGE', 'UPSERT', 'REPLACE'
+    ]
+    
+    # Dangerous SQL patterns
+    DANGEROUS_PATTERNS = [
+        r'\bDELETE\s+FROM\b',
+        r'\bDROP\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW|TRIGGER|PROCEDURE|FUNCTION)\b',
+        r'\bTRUNCATE\s+TABLE\b',
+        r'\bINSERT\s+INTO\b',
+        r'\bUPDATE\s+\w+\s+SET\b',
+        r'\bCREATE\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW|TRIGGER|PROCEDURE|FUNCTION)\b',
+        r'\bALTER\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW|TRIGGER|PROCEDURE|FUNCTION)\b',
+        r'\bGRANT\b',
+        r'\bREVOKE\b',
+        r'\bEXECUTE\b',
+        r'\bEXEC\b',
+        r'\bMERGE\s+INTO\b',
+        r'\bUPSERT\b',
+        r'\bREPLACE\s+INTO\b'
+    ]
+    
+    @classmethod
+    def validate_query(cls, query: str, context: str = "Unknown") -> bool:
+        """
+        Validate that a query is safe (read-only)
+        
+        Args:
+            query: SQL query to validate
+            context: Context where the query is being executed
+            
+        Returns:
+            bool: True if query is safe, False otherwise
+            
+        Raises:
+            SecurityError: If query contains dangerous operations
+        """
+        if not query or not query.strip():
+            raise SecurityError(f"Empty query detected in {context}")
+        
+        # Convert to uppercase for case-insensitive checking
+        query_upper = query.upper().strip()
+        
+        # Check for dangerous keywords at statement level (not within column names)
+        # Split by semicolons to check each statement
+        statements = query_upper.split(';')
+        for statement in statements:
+            statement = statement.strip()
+            if not statement:
+                continue
+                
+            # Check if statement starts with dangerous keywords
+            for keyword in cls.DANGEROUS_KEYWORDS:
+                if statement.startswith(keyword + ' ') or statement.startswith(keyword + '\n'):
+                    raise SecurityError(
+                        f"Dangerous keyword '{keyword}' detected at start of statement. "
+                        f"Context: {context}. Query: {query[:100]}..."
+                    )
+        
+        # Check for dangerous patterns using regex
+        for pattern in cls.DANGEROUS_PATTERNS:
+            if re.search(pattern, query_upper, re.IGNORECASE):
+                raise SecurityError(
+                    f"Dangerous SQL pattern detected in query. "
+                    f"Context: {context}. Query: {query[:100]}..."
+                )
+        
+        # Ensure query starts with SELECT or DESCRIBE
+        if not query_upper.startswith(('SELECT', 'DESCRIBE', 'SHOW', 'EXPLAIN')):
+            raise SecurityError(
+                f"Query must start with SELECT, DESCRIBE, SHOW, or EXPLAIN. "
+                f"Context: {context}. Query: {query[:100]}..."
+            )
+        
+        return True
+    
+    @classmethod
+    def validate_table_name(cls, table_name: str, context: str = "Unknown") -> bool:
+        """
+        Validate table name for SQL injection prevention
+        
+        Args:
+            table_name: Name of the table
+            context: Context where the table name is being used
+            
+        Returns:
+            bool: True if table name is safe
+            
+        Raises:
+            SecurityError: If table name contains dangerous characters
+        """
+        if not table_name or not table_name.strip():
+            raise SecurityError(f"Empty table name detected in {context}")
+        
+        # Check for dangerous characters
+        dangerous_chars = [';', '--', '/*', '*/', "'", '"', '`', '\\', '/', '*']
+        for char in dangerous_chars:
+            if char in table_name:
+                raise SecurityError(
+                    f"Dangerous character '{char}' detected in table name. "
+                    f"Context: {context}. Table: {table_name}"
+                )
+        
+        # Check for SQL injection patterns
+        injection_patterns = [
+            r';\s*$',  # Semicolon at end
+            r'--\s*$',  # SQL comment
+            r'/\*.*\*/',  # Multi-line comment
+            r'UNION\s+SELECT',  # UNION injection
+            r'OR\s+1\s*=\s*1',  # OR 1=1 injection
+            r'AND\s+1\s*=\s*1'  # AND 1=1 injection
+        ]
+        
+        for pattern in injection_patterns:
+            if re.search(pattern, table_name, re.IGNORECASE):
+                raise SecurityError(
+                    f"SQL injection pattern detected in table name. "
+                    f"Context: {context}. Table: {table_name}"
+                )
+        
+        return True
+
+class SecurityError(Exception):
+    """Custom exception for security violations"""
+    pass
 
 class DatabaseComparator:
     def __init__(self):
@@ -63,25 +195,114 @@ class DatabaseComparator:
             logger.error(f"Failed to connect to Redshift: {e}")
             return False
     
+    def safe_execute_query(self, query: str, db_type: str, context: str) -> Any:
+        """
+        Safely execute a query with validation
+        
+        Args:
+            query: SQL query to execute
+            db_type: 'mysql' or 'redshift'
+            context: Context for error reporting
+            
+        Returns:
+            Query result
+            
+        Raises:
+            SecurityError: If query is not safe
+        """
+        try:
+            # Validate query safety
+            QuerySafetyValidator.validate_query(query, context)
+            
+            # Get appropriate connection
+            if db_type == 'mysql':
+                if not self.mysql_conn:
+                    raise Exception("MySQL connection not established")
+                cursor = self.mysql_conn.cursor()
+            elif db_type == 'redshift':
+                if not self.redshift_conn:
+                    raise Exception("Redshift connection not established")
+                cursor = self.redshift_conn.cursor()
+            else:
+                raise ValueError(f"Invalid database type: {db_type}")
+            
+            # Execute query
+            cursor.execute(query)
+            result = cursor.fetchall()
+            cursor.close()
+            
+            return result
+            
+        except SecurityError as e:
+            logger.error(f"Security violation in {context}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error executing query in {context}: {e}")
+            raise
+
+    def safe_read_sql(self, query: str, db_type: str, context: str) -> pd.DataFrame:
+        """
+        Safely read SQL query into pandas DataFrame with validation
+        
+        Args:
+            query: SQL query to execute
+            db_type: 'mysql' or 'redshift'
+            context: Context for error reporting
+            
+        Returns:
+            pandas DataFrame
+            
+        Raises:
+            SecurityError: If query is not safe
+        """
+        try:
+            # Validate query safety
+            QuerySafetyValidator.validate_query(query, context)
+            
+            # Get appropriate connection
+            if db_type == 'mysql':
+                if not self.mysql_conn:
+                    raise Exception("MySQL connection not established")
+                connection = self.mysql_conn
+            elif db_type == 'redshift':
+                if not self.redshift_conn:
+                    raise Exception("Redshift connection not established")
+                connection = self.redshift_conn
+            else:
+                raise ValueError(f"Invalid database type: {db_type}")
+            
+            # Execute query using pandas
+            df = pd.read_sql(query, connection)
+            return df
+            
+        except SecurityError as e:
+            logger.error(f"Security violation in {context}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error reading SQL in {context}: {e}")
+            raise
+
     def get_table_schema(self, table_name: str, db_type: str) -> List[str]:
         """Get table schema (column names) for a given table"""
         try:
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, f"get_table_schema_{db_type}")
+            
             if db_type == 'mysql':
-                cursor = self.mysql_conn.cursor()
-                cursor.execute(f"DESCRIBE {table_name}")
-                columns = [row[0] for row in cursor.fetchall()]
+                query = f"DESCRIBE {table_name}"
+                result = self.safe_execute_query(query, 'mysql', f"get_table_schema_mysql_{table_name}")
+                columns = [row[0] for row in result]
             else:  # redshift
-                cursor = self.redshift_conn.cursor()
-                cursor.execute(f"""
+                query = f"""
                     SELECT column_name 
                     FROM information_schema.columns 
                     WHERE table_name = '{table_name}' 
                     AND table_schema = 'schema_niinedemo'
                     ORDER BY ordinal_position
-                """)
-                columns = [row[0] for row in cursor.fetchall()]
+                """
+                result = self.safe_execute_query(query, 'redshift', f"get_table_schema_redshift_{table_name}")
+                columns = [row[0] for row in result]
             
-            cursor.close()
             return columns
         except Exception as e:
             logger.error(f"Error getting schema for {table_name} in {db_type}: {e}")
@@ -91,110 +312,114 @@ class DatabaseComparator:
         """Get record counts from both databases"""
         counts = {}
         
-        # MySQL count
-        mysql_query = f"SELECT COUNT(*) as count FROM {table_name}"
-        mysql_cursor = self.mysql_conn.cursor()
-        mysql_cursor.execute(mysql_query)
-        counts['mysql_total'] = mysql_cursor.fetchone()[0]
-        mysql_cursor.close()
-        
-        # Redshift count
-        redshift_query = f"SELECT COUNT(*) as count FROM {table_name}"
-        redshift_cursor = self.redshift_conn.cursor()
-        redshift_cursor.execute(redshift_query)
-        counts['redshift_total'] = redshift_cursor.fetchone()[0]
-        redshift_cursor.close()
-        
-        return counts
+        try:
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "get_record_counts")
+            
+            # MySQL count
+            mysql_query = f"SELECT COUNT(*) as count FROM {table_name}"
+            mysql_result = self.safe_execute_query(mysql_query, 'mysql', f"get_record_counts_mysql_{table_name}")
+            counts['mysql_total'] = mysql_result[0][0]
+            
+            # Redshift count
+            redshift_query = f"SELECT COUNT(*) as count FROM {table_name}"
+            redshift_result = self.safe_execute_query(redshift_query, 'redshift', f"get_record_counts_redshift_{table_name}")
+            counts['redshift_total'] = redshift_result[0][0]
+            
+            return counts
+            
+        except Exception as e:
+            logger.error(f"Error getting record counts for {table_name}: {e}")
+            return {'mysql_total': 0, 'redshift_total': 0}
     
     def analyze_date_scenarios(self, table_name: str) -> Dict[str, Any]:
         """Analyze the three date scenarios for a table"""
         scenarios = {}
         
-        # Scenario 1: Creation date & last modified date same (including time)
-        mysql_scenario1_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE creation_time = last_modified_time
-        """
-        
-        redshift_scenario1_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE creation_time = last_modified_time
-        """
-        
-        mysql_cursor = self.mysql_conn.cursor()
-        mysql_cursor.execute(mysql_scenario1_query)
-        mysql_s1_count = mysql_cursor.fetchone()[0]
-        mysql_cursor.close()
-        
-        redshift_cursor = self.redshift_conn.cursor()
-        redshift_cursor.execute(redshift_scenario1_query)
-        redshift_s1_count = redshift_cursor.fetchone()[0]
-        redshift_cursor.close()
-        
-        scenarios['scenario_1'] = {
-            'description': 'Same Creation & Modified Date (with time)',
-            'mysql_count': mysql_s1_count,
-            'redshift_count': redshift_s1_count
-        }
-        
-        # Scenario 2: Creation date & last modified date same but time different
-        mysql_scenario2_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE DATE(creation_time) = DATE(last_modified_time)
-            AND creation_time != last_modified_time
-        """
-        
-        redshift_scenario2_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE DATE(creation_time) = DATE(last_modified_time)
-            AND creation_time != last_modified_time
-        """
-        
-        mysql_cursor = self.mysql_conn.cursor()
-        mysql_cursor.execute(mysql_scenario2_query)
-        mysql_s2_count = mysql_cursor.fetchone()[0]
-        mysql_cursor.close()
-        
-        redshift_cursor = self.redshift_conn.cursor()
-        redshift_cursor.execute(redshift_scenario2_query)
-        redshift_s2_count = redshift_cursor.fetchone()[0]
-        redshift_cursor.close()
-        
-        scenarios['scenario_2'] = {
-            'description': 'Same Date & Different Time',
-            'mysql_count': mysql_s2_count,
-            'redshift_count': redshift_s2_count
-        }
-        
-        # Scenario 3: Creation date & last modified date different
-        mysql_scenario3_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE DATE(creation_time) != DATE(last_modified_time)
-        """
-        
-        redshift_scenario3_query = f"""
-            SELECT COUNT(*) as count FROM {table_name} 
-            WHERE DATE(creation_time) != DATE(last_modified_time)
-        """
-        
-        mysql_cursor = self.mysql_conn.cursor()
-        mysql_cursor.execute(mysql_scenario3_query)
-        mysql_s3_count = mysql_cursor.fetchone()[0]
-        mysql_cursor.close()
-        
-        redshift_cursor = self.redshift_conn.cursor()
-        redshift_cursor.execute(redshift_scenario3_query)
-        redshift_s3_count = redshift_cursor.fetchone()[0]
-        redshift_cursor.close()
-        
-        scenarios['scenario_3'] = {
-            'description': 'Different Creation & Modified Dates',
-            'mysql_count': mysql_s3_count,
-            'redshift_count': redshift_s3_count
-        }
-        
-        return scenarios
+        try:
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "analyze_date_scenarios")
+            
+            # Scenario 1: Creation date & last modified date same (including time)
+            mysql_scenario1_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE creation_time = last_modified_time
+            """
+            
+            redshift_scenario1_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE creation_time = last_modified_time
+            """
+            
+            mysql_result = self.safe_execute_query(mysql_scenario1_query, 'mysql', f"analyze_date_scenarios_mysql_s1_{table_name}")
+            mysql_s1_count = mysql_result[0][0]
+            
+            redshift_result = self.safe_execute_query(redshift_scenario1_query, 'redshift', f"analyze_date_scenarios_redshift_s1_{table_name}")
+            redshift_s1_count = redshift_result[0][0]
+            
+            scenarios['scenario_1'] = {
+                'description': 'Same Creation & Modified Date (with time)',
+                'mysql_count': mysql_s1_count,
+                'redshift_count': redshift_s1_count
+            }
+            
+            # Scenario 2: Creation date & last modified date same but time different
+            mysql_scenario2_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE DATE(creation_time) = DATE(last_modified_time)
+                AND creation_time != last_modified_time
+            """
+            
+            redshift_scenario2_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE DATE(creation_time) = DATE(last_modified_time)
+                AND creation_time != last_modified_time
+            """
+            
+            mysql_result = self.safe_execute_query(mysql_scenario2_query, 'mysql', f"analyze_date_scenarios_mysql_s2_{table_name}")
+            mysql_s2_count = mysql_result[0][0]
+            
+            redshift_result = self.safe_execute_query(redshift_scenario2_query, 'redshift', f"analyze_date_scenarios_redshift_s2_{table_name}")
+            redshift_s2_count = redshift_result[0][0]
+            
+            scenarios['scenario_2'] = {
+                'description': 'Same Date & Different Time',
+                'mysql_count': mysql_s2_count,
+                'redshift_count': redshift_s2_count
+            }
+            
+            # Scenario 3: Creation date & last modified date different
+            mysql_scenario3_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE DATE(creation_time) != DATE(last_modified_time)
+            """
+            
+            redshift_scenario3_query = f"""
+                SELECT COUNT(*) as count FROM {table_name} 
+                WHERE DATE(creation_time) != DATE(last_modified_time)
+            """
+            
+            mysql_result = self.safe_execute_query(mysql_scenario3_query, 'mysql', f"analyze_date_scenarios_mysql_s3_{table_name}")
+            mysql_s3_count = mysql_result[0][0]
+            
+            redshift_result = self.safe_execute_query(redshift_scenario3_query, 'redshift', f"analyze_date_scenarios_redshift_s3_{table_name}")
+            redshift_s3_count = redshift_result[0][0]
+            
+            scenarios['scenario_3'] = {
+                'description': 'Different Creation & Modified Dates',
+                'mysql_count': mysql_s3_count,
+                'redshift_count': redshift_s3_count
+            }
+            
+            return scenarios
+            
+        except Exception as e:
+            logger.error(f"Error analyzing date scenarios for {table_name}: {e}")
+            return {
+                'scenario_1': {'description': 'Same Creation & Modified Date (with time)', 'mysql_count': 0, 'redshift_count': 0},
+                'scenario_2': {'description': 'Same Date & Different Time', 'mysql_count': 0, 'redshift_count': 0},
+                'scenario_3': {'description': 'Different Creation & Modified Dates', 'mysql_count': 0, 'redshift_count': 0}
+            }
     
     def compare_all_data_with_differences(self, table_name: str) -> Dict[str, Any]:
         """Compare ALL data between databases and capture differences (limited for performance)"""
@@ -221,12 +446,15 @@ class DatabaseComparator:
             pk_column = 'id' if 'id' in common_columns else common_columns[0]
             columns_str = ', '.join(common_columns)
             
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "compare_all_data_with_differences")
+            
             # Get ALL data from both databases
             mysql_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
             redshift_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
             
-            mysql_df = pd.read_sql(mysql_query, self.mysql_conn)
-            redshift_df = pd.read_sql(redshift_query, self.redshift_conn)
+            mysql_df = self.safe_read_sql(mysql_query, 'mysql', f"compare_all_data_mysql_{table_name}")
+            redshift_df = self.safe_read_sql(redshift_query, 'redshift', f"compare_all_data_redshift_{table_name}")
             
             if mysql_df.empty or redshift_df.empty:
                 logger.warning(f"Empty data for {table_name}")
@@ -374,6 +602,9 @@ class DatabaseComparator:
             logger.info(f"Found timestamp column: {timestamp_column}")
             logger.info(f"Found created_time column: {created_time_column}")
             
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "find_missing_records")
+            
             # Get all IDs from MySQL
             mysql_query = f"SELECT {pk_column}"
             if timestamp_column:
@@ -382,10 +613,7 @@ class DatabaseComparator:
                 mysql_query += f", {created_time_column}"
             mysql_query += f" FROM {table_name} ORDER BY {pk_column}"
             
-            mysql_cursor = self.mysql_conn.cursor()
-            mysql_cursor.execute(mysql_query)
-            mysql_records = mysql_cursor.fetchall()
-            mysql_cursor.close()
+            mysql_records = self.safe_execute_query(mysql_query, 'mysql', f"find_missing_records_mysql_{table_name}")
             
             # Get all IDs from Redshift
             redshift_query = f"SELECT {pk_column}"
@@ -395,10 +623,7 @@ class DatabaseComparator:
                 redshift_query += f", {created_time_column}"
             redshift_query += f" FROM {table_name} ORDER BY {pk_column}"
             
-            redshift_cursor = self.redshift_conn.cursor()
-            redshift_cursor.execute(redshift_query)
-            redshift_records = redshift_cursor.fetchall()
-            redshift_cursor.close()
+            redshift_records = self.safe_execute_query(redshift_query, 'redshift', f"find_missing_records_redshift_{table_name}")
             
             # Convert to sets for comparison (using just the ID for set operations)
             mysql_ids = {record[0] for record in mysql_records}
@@ -2289,23 +2514,13 @@ def main():
     
     if success:
         print("\n" + "="*80)
-        print("ENHANCED DATA COMPARISON TEST COMPLETED SUCCESSFULLY!")
+        print("DATA COMPARISON COMPLETED SUCCESSFULLY")
         print("="*80)
-        print("✅ ALL your requirements have been implemented:")
-        print("   - ALL differences shown (not just samples)")
-        print("   - Search functionality by Record ID")
-        print("   - Collapsible dropdowns with easy collapse")
-        print("   - Export to CSV functionality")
-        print("   - Day/Night mode toggle")
-        print("   - Professional UI with 90%+ green colors")
-        print("   - Empty string handling (empty ≠ null)")
-        print("   - Column validation dashboard")
-        print("   - Floating action buttons for navigation")
-        print("   - Comprehensive field-by-field analysis")
-        print("\nCheck the generated HTML report for the complete analysis!")
+        print("Report generated successfully.")
+        print("Check the generated HTML report for detailed analysis.")
     else:
         print("\n" + "="*80)
-        print("DATA COMPARISON TEST FAILED!")
+        print("DATA COMPARISON FAILED")
         print("="*80)
         print("Check data_comparison_test.log for error details")
     
