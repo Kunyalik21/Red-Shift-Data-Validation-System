@@ -22,7 +22,9 @@ import re
 from typing import Dict, List, Tuple, Any
 import sys
 import os
-from config import MYSQL_CONFIG, REDSHIFT_CONFIG, TABLES_TO_COMPARE, TEST_CONFIG, TIME_PERIOD_CONFIG
+from config import MYSQL_CONFIG, REDSHIFT_CONFIG, TABLES_TO_COMPARE, TEST_CONFIG, TIME_PERIOD_CONFIG, EMAIL_CONFIG
+from email_utils import load_email_credentials, send_email_with_attachment
+import glob
 
 # Configure logging
 logging.basicConfig(
@@ -2716,6 +2718,56 @@ class DatabaseComparator:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             html_file = f'reports/data_comparison_report_full_{timestamp}.html'
             self.generate_enhanced_html_report(report, html_file)
+
+            # Cleanup old reports (keep latest 10)
+            try:
+                report_files = sorted(glob.glob('reports/data_comparison_report_full_*.html'))
+                if len(report_files) > 10:
+                    to_delete = report_files[:-10]
+                    for old in to_delete:
+                        try:
+                            os.remove(old)
+                        except Exception:
+                            pass
+            except Exception as cleanup_err:
+                logger.warning(f"Report cleanup warning: {cleanup_err}")
+
+            # Send email with latest report
+            try:
+                if EMAIL_CONFIG.get('enabled', False):
+                    sender_env, password_env = load_email_credentials()
+                    sender = EMAIL_CONFIG.get('sender') or sender_env
+                    password = EMAIL_CONFIG.get('password') or password_env
+                    recipients = EMAIL_CONFIG.get('recipients', [])
+                    if sender and password and recipients:
+                        period = report.get('time_period', {})
+                        start = period.get('start_date') or 'ALL'
+                        end = period.get('end_date') or 'ALL'
+                        subject = f"Data Sync Report | MySQL: {self.mysql_config['database']} | Redshift: {self.redshift_config['database']} | {start} → {end}"
+                        tables = ', '.join(self.tables)
+                        html_body = f"""
+                        <div style='font-family: Arial, sans-serif;'>
+                          <h2>Data Sync Validation Report</h2>
+                          <p><b>MySQL Database:</b> {self.mysql_config['database']} | <b>Redshift Database:</b> {self.redshift_config['database']}</p>
+                          <p><b>Tables:</b> {tables}</p>
+                          <p><b>Time Period:</b> {start} to {end}</p>
+                          <p>Latest report is attached. Summary:</p>
+                          <ul>
+                            <li>Total MySQL Records: {report['summary']['total_mysql_records']:,}</li>
+                            <li>Total Redshift Records: {report['summary']['total_redshift_records']:,}</li>
+                            <li>Missing in Redshift: {report['summary']['total_missing_in_redshift']:,}</li>
+                            <li>Missing in MySQL: {report['summary']['total_missing_in_mysql']:,}</li>
+                          </ul>
+                        </div>
+                        """
+                        send_email_with_attachment(
+                            EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'],
+                            sender, password, recipients, subject, html_body, html_file
+                        )
+                    else:
+                        logger.warning("Email not sent: missing sender/password/recipients")
+            except Exception as mail_err:
+                logger.warning(f"Email send warning: {mail_err}")
             
             logger.info(f"Enhanced HTML report saved to: {html_file}")
             logger.info("Data comparison completed successfully!")

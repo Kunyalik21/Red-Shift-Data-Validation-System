@@ -65,3 +65,18 @@ PRIMARY_KEY_COLUMNS = {
     # 'ck_orders': 'order_id',
     # 'ck_sales': 'sale_id'
 }
+
+# Email configuration (use environment variables for sensitive values)
+# Create a .env file (not committed) with:
+# EMAIL_SENDER=redshiftvalidationsystem@gmail.com
+# EMAIL_PASSWORD=Salescode@321
+EMAIL_CONFIG = {
+    'enabled': True,
+    'smtp_server': 'smtp.gmail.com',
+    'smtp_port': 587,
+    'sender': None,  # Loaded from env var EMAIL_SENDER
+    'password': None,  # Loaded from env var EMAIL_PASSWORD
+    'recipients': [
+        'kunyalik.kanwar@salescode.ai'
+    ]
+}
