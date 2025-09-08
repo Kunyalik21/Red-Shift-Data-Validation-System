@@ -32,6 +32,10 @@ def send_email_with_attachment(smtp_server: str, smtp_port: int, sender: str, pa
         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(attachment_path)}"')
         msg.attach(part)
 
+    # Sanitize potential spaced app passwords (Gmail displays with spaces)
+    if password:
+        password = password.replace(' ', '')
+
     with smtplib.SMTP(smtp_server, smtp_port) as server:
         server.starttls()
         server.login(sender, password)
