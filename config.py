@@ -31,12 +31,20 @@ TABLES_TO_COMPARE = [
     'ck_sales_details'
 ]
 
+# Time Period Configuration
+TIME_PERIOD_CONFIG = {
+    'enabled': True,  # Set to False to process ALL records (original behavior)
+    'days_to_process': 45,  # Number of days to look back from current date (default: 45)
+    'validate_deletion': True,  # Check if old records are properly deleted from MySQL
+    'deletion_threshold_days': 45  # Records older than this should be deleted from MySQL (default: 45)
+}
+
 # Test Configuration
 TEST_CONFIG = {
     'sample_size': None,  # Process ALL records - full production mode
     'timeout_seconds': 600,  # Query timeout in seconds (increased for large datasets)
-    'max_missing_records_to_show': 50,  # Maximum missing record IDs to display in report
-    'max_differences_to_show': 50,  # Maximum differences to display per column (prevents UI lag)
+    'max_missing_records_to_show': 100,  # Maximum missing record IDs to display in report
+    'max_differences_to_show': 100,  # Maximum differences to display per column (prevents UI lag)
     'show_all_differences_by_default': False,  # Whether to show all differences or just summary
     'compact_ui_mode': True,  # Use compact card sizes for better UX
     'auto_collapse_columns': True  # Auto-collapse columns by default

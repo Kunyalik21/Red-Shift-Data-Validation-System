@@ -22,7 +22,7 @@ import re
 from typing import Dict, List, Tuple, Any
 import sys
 import os
-from config import MYSQL_CONFIG, REDSHIFT_CONFIG, TABLES_TO_COMPARE, TEST_CONFIG
+from config import MYSQL_CONFIG, REDSHIFT_CONFIG, TABLES_TO_COMPARE, TEST_CONFIG, TIME_PERIOD_CONFIG
 
 # Configure logging
 logging.basicConfig(
@@ -340,15 +340,24 @@ class DatabaseComparator:
             # Validate table name
             QuerySafetyValidator.validate_table_name(table_name, "analyze_date_scenarios")
             
+            # Apply time-period filter if enabled
+            time_dates = self.get_time_period_dates()
+            time_filter = ""
+            if time_dates['start_date'] and time_dates['end_date']:
+                time_filter = (
+                    f" AND creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'"
+                    f" AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'"
+                )
+            
             # Scenario 1: Creation date & last modified date same (including time)
             mysql_scenario1_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
-                WHERE creation_time = last_modified_time
+                WHERE creation_time = last_modified_time{time_filter}
             """
             
             redshift_scenario1_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
-                WHERE creation_time = last_modified_time
+                WHERE creation_time = last_modified_time{time_filter}
             """
             
             mysql_result = self.safe_execute_query(mysql_scenario1_query, 'mysql', f"analyze_date_scenarios_mysql_s1_{table_name}")
@@ -358,7 +367,7 @@ class DatabaseComparator:
             redshift_s1_count = redshift_result[0][0]
             
             scenarios['scenario_1'] = {
-                'description': 'Same Creation & Modified Date (with time)',
+                'description': 'Creation and Last Modified timestamps are exactly the same',
                 'mysql_count': mysql_s1_count,
                 'redshift_count': redshift_s1_count
             }
@@ -367,13 +376,13 @@ class DatabaseComparator:
             mysql_scenario2_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
                 WHERE DATE(creation_time) = DATE(last_modified_time)
-                AND creation_time != last_modified_time
+                AND creation_time != last_modified_time{time_filter}
             """
             
             redshift_scenario2_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
                 WHERE DATE(creation_time) = DATE(last_modified_time)
-                AND creation_time != last_modified_time
+                AND creation_time != last_modified_time{time_filter}
             """
             
             mysql_result = self.safe_execute_query(mysql_scenario2_query, 'mysql', f"analyze_date_scenarios_mysql_s2_{table_name}")
@@ -383,7 +392,7 @@ class DatabaseComparator:
             redshift_s2_count = redshift_result[0][0]
             
             scenarios['scenario_2'] = {
-                'description': 'Same Date & Different Time',
+                'description': 'Creation and Last Modified dates are the same, times differ',
                 'mysql_count': mysql_s2_count,
                 'redshift_count': redshift_s2_count
             }
@@ -391,12 +400,12 @@ class DatabaseComparator:
             # Scenario 3: Creation date & last modified date different
             mysql_scenario3_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
-                WHERE DATE(creation_time) != DATE(last_modified_time)
+                WHERE DATE(creation_time) != DATE(last_modified_time){time_filter}
             """
             
             redshift_scenario3_query = f"""
                 SELECT COUNT(*) as count FROM {table_name} 
-                WHERE DATE(creation_time) != DATE(last_modified_time)
+                WHERE DATE(creation_time) != DATE(last_modified_time){time_filter}
             """
             
             mysql_result = self.safe_execute_query(mysql_scenario3_query, 'mysql', f"analyze_date_scenarios_mysql_s3_{table_name}")
@@ -406,7 +415,7 @@ class DatabaseComparator:
             redshift_s3_count = redshift_result[0][0]
             
             scenarios['scenario_3'] = {
-                'description': 'Different Creation & Modified Dates',
+                'description': 'Creation and Last Modified dates are different',
                 'mysql_count': mysql_s3_count,
                 'redshift_count': redshift_s3_count
             }
@@ -416,10 +425,131 @@ class DatabaseComparator:
         except Exception as e:
             logger.error(f"Error analyzing date scenarios for {table_name}: {e}")
             return {
-                'scenario_1': {'description': 'Same Creation & Modified Date (with time)', 'mysql_count': 0, 'redshift_count': 0},
-                'scenario_2': {'description': 'Same Date & Different Time', 'mysql_count': 0, 'redshift_count': 0},
-                'scenario_3': {'description': 'Different Creation & Modified Dates', 'mysql_count': 0, 'redshift_count': 0}
+                'scenario_1': {'description': 'Creation and Last Modified timestamps are exactly the same', 'mysql_count': 0, 'redshift_count': 0},
+                'scenario_2': {'description': 'Creation and Last Modified dates are the same, times differ', 'mysql_count': 0, 'redshift_count': 0},
+                'scenario_3': {'description': 'Creation and Last Modified dates are different', 'mysql_count': 0, 'redshift_count': 0}
             }
+    
+    def get_time_period_dates(self) -> Dict[str, datetime]:
+        """Calculate start and end dates for time period processing"""
+        if not TIME_PERIOD_CONFIG.get('enabled', False):
+            return {'start_date': None, 'end_date': None}
+        
+        # Get days_to_process with default fallback
+        days_to_process = TIME_PERIOD_CONFIG.get('days_to_process')
+        if not days_to_process or days_to_process <= 0:
+            days_to_process = 45  # Default fallback
+            logger.warning(f"days_to_process not set or invalid, using default: {days_to_process} days")
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_to_process)
+        
+        logger.info(f"Time period: {start_date.strftime('%Y-%m-%d %H:%M:%S')} to {end_date.strftime('%Y-%m-%d %H:%M:%S')} ({days_to_process} days)")
+        return {'start_date': start_date, 'end_date': end_date}
+    
+    def get_record_counts_with_time_filter(self, table_name: str) -> Dict[str, int]:
+        """Get record counts from both databases with time period filter"""
+        counts = {}
+        time_dates = self.get_time_period_dates()
+        
+        try:
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "get_record_counts_with_time_filter")
+            
+            if time_dates['start_date'] and time_dates['end_date']:
+                # MySQL count with time filter
+                mysql_query = f"""
+                    SELECT COUNT(*) as count FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                """
+                
+                # Redshift count with time filter
+                redshift_query = f"""
+                    SELECT COUNT(*) as count FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                """
+            else:
+                # Fallback to original behavior
+                mysql_query = f"SELECT COUNT(*) as count FROM {table_name}"
+                redshift_query = f"SELECT COUNT(*) as count FROM {table_name}"
+            
+            mysql_result = self.safe_execute_query(mysql_query, 'mysql', f"get_record_counts_mysql_{table_name}")
+            counts['mysql_total'] = mysql_result[0][0]
+            
+            redshift_result = self.safe_execute_query(redshift_query, 'redshift', f"get_record_counts_redshift_{table_name}")
+            counts['redshift_total'] = redshift_result[0][0]
+            
+            return counts
+            
+        except Exception as e:
+            logger.error(f"Error getting record counts for {table_name}: {e}")
+            return {'mysql_total': 0, 'redshift_total': 0}
+    
+    def validate_deletion_of_old_records(self, table_name: str) -> Dict[str, Any]:
+        """Validate that old records (older than threshold) are properly deleted from MySQL"""
+        deletion_validation = {
+            'total_old_records': 0,
+            'deleted_records': 0,
+            'not_deleted_records': 0,
+            'not_deleted_details': []
+        }
+        
+        if not TIME_PERIOD_CONFIG.get('validate_deletion', False):
+            return deletion_validation
+        
+        try:
+            # Validate table name
+            QuerySafetyValidator.validate_table_name(table_name, "validate_deletion_of_old_records")
+            
+            # Get deletion_threshold_days with default fallback
+            deletion_threshold_days = TIME_PERIOD_CONFIG.get('deletion_threshold_days')
+            if not deletion_threshold_days or deletion_threshold_days <= 0:
+                deletion_threshold_days = 45  # Default fallback
+                logger.warning(f"deletion_threshold_days not set or invalid, using default: {deletion_threshold_days} days")
+            
+            # Calculate deletion threshold date
+            threshold_date = datetime.now() - timedelta(days=deletion_threshold_days)
+            
+            # Count total records that are older than the threshold (these are the ones that should be deleted)
+            count_query = f"""
+                SELECT COUNT(*) 
+                FROM {table_name}
+                WHERE creation_time < '{threshold_date.strftime('%Y-%m-%d %H:%M:%S')}'
+                AND last_modified_time < '{threshold_date.strftime('%Y-%m-%d %H:%M:%S')}'
+            """
+            count_result = self.safe_execute_query(count_query, 'mysql', f"validate_deletion_count_{table_name}")
+            total_not_deleted = int(count_result[0][0]) if count_result and count_result[0] else 0
+            deletion_validation['total_old_records'] = total_not_deleted
+            deletion_validation['not_deleted_records'] = total_not_deleted
+
+            # Fetch only a limited sample for display, aligned with report config
+            max_show = self.test_config.get('max_missing_records_to_show', 50)
+            details_query = f"""
+                SELECT id, creation_time, last_modified_time 
+                FROM {table_name} 
+                WHERE creation_time < '{threshold_date.strftime('%Y-%m-%d %H:%M:%S')}'
+                AND last_modified_time < '{threshold_date.strftime('%Y-%m-%d %H:%M:%S')}'
+                ORDER BY creation_time DESC
+                LIMIT {max_show}
+            """
+            details_result = self.safe_execute_query(details_query, 'mysql', f"validate_deletion_details_{table_name}")
+
+            for record_id, creation_time, last_modified_time in details_result:
+                deletion_validation['not_deleted_details'].append({
+                    'record_id': record_id,
+                    'creation_time': creation_time.strftime('%Y-%m-%d %H:%M:%S') if creation_time else None,
+                    'last_modified_time': last_modified_time.strftime('%Y-%m-%d %H:%M:%S') if last_modified_time else None
+                })
+            
+            logger.info(f"Deletion validation for {table_name}: {deletion_validation['not_deleted_records']} records not deleted out of {deletion_validation['total_old_records']} old records")
+            
+            return deletion_validation
+            
+        except Exception as e:
+            logger.error(f"Error validating deletion for {table_name}: {e}")
+            return deletion_validation
     
     def compare_all_data_with_differences(self, table_name: str) -> Dict[str, Any]:
         """Compare ALL data between databases and capture differences (limited for performance)"""
@@ -449,9 +579,27 @@ class DatabaseComparator:
             # Validate table name
             QuerySafetyValidator.validate_table_name(table_name, "compare_all_data_with_differences")
             
-            # Get ALL data from both databases
-            mysql_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
-            redshift_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
+            # Get time period dates for filtering
+            time_dates = self.get_time_period_dates()
+            
+            # Build queries with time period filter if enabled
+            if time_dates['start_date'] and time_dates['end_date']:
+                mysql_query = f"""
+                    SELECT {columns_str} FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    ORDER BY {pk_column}
+                """
+                redshift_query = f"""
+                    SELECT {columns_str} FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    ORDER BY {pk_column}
+                """
+            else:
+                # Fallback to original behavior
+                mysql_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
+                redshift_query = f"SELECT {columns_str} FROM {table_name} ORDER BY {pk_column}"
             
             mysql_df = self.safe_read_sql(mysql_query, 'mysql', f"compare_all_data_mysql_{table_name}")
             redshift_df = self.safe_read_sql(redshift_query, 'redshift', f"compare_all_data_redshift_{table_name}")
@@ -605,23 +753,44 @@ class DatabaseComparator:
             # Validate table name
             QuerySafetyValidator.validate_table_name(table_name, "find_missing_records")
             
-            # Get all IDs from MySQL
+            # Get time period dates for filtering
+            time_dates = self.get_time_period_dates()
+            
+            # Build MySQL query with time period filter if enabled
             mysql_query = f"SELECT {pk_column}"
             if timestamp_column:
                 mysql_query += f", {timestamp_column}"
             if created_time_column:
                 mysql_query += f", {created_time_column}"
-            mysql_query += f" FROM {table_name} ORDER BY {pk_column}"
+            
+            if time_dates['start_date'] and time_dates['end_date']:
+                mysql_query += f"""
+                    FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    ORDER BY {pk_column}
+                """
+            else:
+                mysql_query += f" FROM {table_name} ORDER BY {pk_column}"
             
             mysql_records = self.safe_execute_query(mysql_query, 'mysql', f"find_missing_records_mysql_{table_name}")
             
-            # Get all IDs from Redshift
+            # Build Redshift query with time period filter if enabled
             redshift_query = f"SELECT {pk_column}"
             if timestamp_column:
                 redshift_query += f", {timestamp_column}"
             if created_time_column:
                 redshift_query += f", {created_time_column}"
-            redshift_query += f" FROM {table_name} ORDER BY {pk_column}"
+            
+            if time_dates['start_date'] and time_dates['end_date']:
+                redshift_query += f"""
+                    FROM {table_name} 
+                    WHERE creation_time >= '{time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    AND creation_time <= '{time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S')}'
+                    ORDER BY {pk_column}
+                """
+            else:
+                redshift_query += f" FROM {table_name} ORDER BY {pk_column}"
             
             redshift_records = self.safe_execute_query(redshift_query, 'redshift', f"find_missing_records_redshift_{table_name}")
             
@@ -1765,6 +1934,7 @@ class DatabaseComparator:
             <div class="subtitle">MySQL ↔ Redshift Comprehensive Analysis</div>
             <div class="subtitle"><strong>MySQL Database:</strong> {self.mysql_config['database']} | <strong>Redshift Database:</strong> {self.redshift_config['database']}</div>
             <div class="subtitle">Generated: {report['timestamp']}</div>
+            {f'<div class="subtitle" style="background: var(--accent-color); color: white; padding: 8px 16px; border-radius: 8px; margin-top: 10px; display: inline-block;"><i class="fas fa-calendar-alt"></i> <strong>Time Period:</strong> {report["time_period"]["start_date"]} to {report["time_period"]["end_date"]} ({report["time_period"]["days_processed"]} days)</div>' if report.get('time_period', {}).get('enabled') else ''}
         </div>
 
         <!-- Overall System Health Dashboard -->
@@ -1822,11 +1992,7 @@ class DatabaseComparator:
                     <div class="value">{success_rate:.1f}%</div>
                     <div class="subtitle">Column-Level Quality</div>
                 </div>
-                <div class="card {'excellent' if success_rate >= 95 else 'success' if success_rate >= 90 else 'warning' if success_rate >= 70 else 'error'}">
-                    <h3><i class="fas fa-award"></i> Data Quality</h3>
-                    <div class="value">{'Excellent' if success_rate >= 95 else 'Good' if success_rate >= 90 else 'Fair' if success_rate >= 70 else 'Poor'}</div>
-                    <div class="subtitle">Overall Assessment</div>
-                </div>
+                
             </div>
         </div>
 """
@@ -2111,6 +2277,48 @@ class DatabaseComparator:
 """
                     
                     html_content += """
+                </div>
+"""
+            
+            # Add Deletion Validation Section
+            if TIME_PERIOD_CONFIG.get('validate_deletion', False) and 'deletion_validation' in table_data:
+                deletion_data = table_data['deletion_validation']
+                total_old_records = deletion_data['total_old_records']
+                not_deleted_records = deletion_data['not_deleted_records']
+                
+                if total_old_records > 0:
+                    html_content += f"""
+                <h3><i class="fas fa-trash-alt"></i> Deletion Validation Analysis</h3>
+                <div class="missing-records-section">
+                    <div class="missing-records-card {'error' if not_deleted_records > 0 else 'success'}">
+                        <div class="missing-header" onclick="toggleMissingRecords('{table_name}_deletion_validation')">
+                            <h4><i class="fas fa-exclamation-triangle"></i> Records Not Deleted ({not_deleted_records:,} records)</h4>
+                            <span class="subtitle">Records older than {TIME_PERIOD_CONFIG.get('deletion_threshold_days', 45)} days that should be deleted from MySQL</span>
+                            <i class="fas fa-chevron-down chevron" id="{table_name}_deletion_validation_chevron"></i>
+                        </div>
+                        <div class="missing-content" id="{table_name}_deletion_validation_content">
+                            <div class="missing-info">Showing {len(deletion_data['not_deleted_details'])} of {not_deleted_records:,} records that should be deleted</div>
+                            <table class="missing-table">
+                                <tr>
+                                    <th><i class="fas fa-key"></i> Record ID</th>
+                                    <th><i class="fas fa-calendar-plus"></i> Creation Time</th>
+                                    <th><i class="fas fa-clock"></i> Last Modified Time</th>
+                                </tr>
+"""
+                    
+                    for record in deletion_data['not_deleted_details']:
+                        html_content += f"""
+                                <tr>
+                                    <td>{record['record_id']}</td>
+                                    <td>{record['creation_time']}</td>
+                                    <td>{record['last_modified_time']}</td>
+                                </tr>
+"""
+                    
+                    html_content += """
+                            </table>
+                        </div>
+                    </div>
                 </div>
 """
             
@@ -2461,14 +2669,30 @@ class DatabaseComparator:
                 }
             }
             
+            # Get time period information
+            time_dates = self.get_time_period_dates()
+            report['time_period'] = {
+                'enabled': TIME_PERIOD_CONFIG.get('enabled', False),
+                'start_date': time_dates['start_date'].strftime('%Y-%m-%d %H:%M:%S') if time_dates['start_date'] else None,
+                'end_date': time_dates['end_date'].strftime('%Y-%m-%d %H:%M:%S') if time_dates['end_date'] else None,
+                'days_processed': TIME_PERIOD_CONFIG.get('days_to_process', 45) if TIME_PERIOD_CONFIG.get('enabled', False) else None
+            }
+            
             for table_name in self.tables:
                 logger.info(f"Analyzing table: {table_name}")
                 
+                # Use time-filtered record counts if enabled
+                if TIME_PERIOD_CONFIG.get('enabled', False):
+                    record_counts = self.get_record_counts_with_time_filter(table_name)
+                else:
+                    record_counts = self.get_record_counts(table_name)
+                
                 table_report = {
-                    'record_counts': self.get_record_counts(table_name),
+                    'record_counts': record_counts,
                     'date_scenarios': self.analyze_date_scenarios(table_name),
                     'field_comparison': self.compare_all_data_with_differences(table_name),
-                    'missing_records': self.find_missing_records(table_name)
+                    'missing_records': self.find_missing_records(table_name),
+                    'deletion_validation': self.validate_deletion_of_old_records(table_name)
                 }
                 
                 # Update summary
