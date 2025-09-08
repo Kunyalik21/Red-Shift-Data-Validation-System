@@ -5,15 +5,15 @@ This tool compares data between MySQL and Redshift databases to identify discrep
 ## 🚀 Features
 
 - **Record Count Comparison**: Compare total records between MySQL and Redshift
-- **Date Scenario Analysis**: Analyze three specific date scenarios:
-  1. Creation date & last modified date same (including time)
-  2. Creation date & last modified date same but time different  
-  3. Creation date & last modified date different
+- **Date Scenario Analysis (Time-Window Aware)**: Analyze three specific date scenarios within the configured time window:
+  1. Creation and Last Modified timestamps are exactly the same
+  2. Creation and Last Modified dates are the same, times differ
+  3. Creation and Last Modified dates are different
 - **✨ Enhanced Missing Records Detection**: Bidirectional detection of records that exist in one database but not the other
   - Records missing in Redshift (present in MySQL only)
   - Records missing in MySQL (present in Redshift only)
   - Detailed missing records with Record IDs and Last Modified timestamps
-- **Field-by-Field Analysis**: Compare actual data values for ALL records with difference tracking
+- **Field-by-Field Analysis**: Compare actual data values (respects time window when enabled) with difference tracking
 - **Interactive HTML Reports**: Professional dashboard with:
   - 🌓 Dark/Light mode toggle
   - 📊 Real-time statistics dashboard
@@ -21,7 +21,7 @@ This tool compares data between MySQL and Redshift databases to identify discrep
   - 📤 CSV export capability
   - 🎯 Collapsible sections for easy navigation
   - 📱 Responsive design
-  - 🎨 Professional color coding (90%+ green, 75-90% yellow, <75% red)
+  - 🎨 Professional color coding and compact UI
 
 ## Prerequisites
 
@@ -68,10 +68,23 @@ Edit `config.py` to modify:
 - Primary key columns (if different from 'id')
 - Column mappings (if column names differ between databases)
 - **UI/UX Settings**:
-  - `max_differences_to_show`: Maximum differences to display per column (default: 50)
-  - `max_missing_records_to_show`: Maximum missing records to display per section (default: 50)
+  - `max_differences_to_show`: Maximum differences to display per column (default: 100)
+  - `max_missing_records_to_show`: Maximum rows shown in expandable lists (default: 50)
   - `auto_collapse_columns`: Auto-collapse columns by default (default: True)
   - `compact_ui_mode`: Use compact card design (default: True)
+- **Time Window & Deletion Validation** (`TIME_PERIOD_CONFIG`):
+  ```python
+  TIME_PERIOD_CONFIG = {
+      'enabled': True,            # If True, compare only records within window
+      'days_to_process': 45,      # Lookback window (defaults to 45 if missing/invalid)
+      'validate_deletion': True,  # Validate old records are deleted from MySQL
+      'deletion_threshold_days': 45  # Threshold for deletion validation (defaults to 45)
+  }
+  ```
+
+Notes:
+- Headers show exact totals; dropdowns list up to `max_missing_records_to_show` for performance.
+- Deletion Validation shows the exact total count of records older than the threshold, while listing only up to the configured cap in the dropdown.
 
 ## Current Configuration
 
@@ -129,35 +142,23 @@ Red-Shift-Data-Validation-System/
 
 ## Report Structure
 
-### Summary Section:
-- Total tables analyzed
-- Tables with mismatches
-- Total record counts for both databases
-- Missing records count
-
 ### Per-Table Analysis:
-- **Record Counts**: Total and filtered (till yesterday) counts
-- **Date Scenarios**: Analysis of the three date scenarios
-- **✨ Missing Records Analysis**: Comprehensive bidirectional missing records detection
-  - Records missing in Redshift (present in MySQL only)
-  - Records missing in MySQL (present in Redshift only)
-  - Record IDs with Last Modified timestamps
-  - Collapsible sections for easy viewing
-- **Field-by-Field Comparison**: Complete data quality validation with difference tracking
+- **Record Counts**: Total counts (or filtered by configured time window)
+- **Date Scenarios**: Analysis of the three patterns (time-window aware)
+- **✨ Missing Records Analysis**: Bidirectional detection (header totals exact, dropdown capped)
+- **Deletion Validation Analysis**: Exact total of old records + capped details list
+- **Field-by-Field Comparison**: Complete value checks with differences
 
-## Date Scenarios Explained
+## Date Scenarios Explained (Time-Window Aware)
 
-### Scenario 1: Same Creation & Last Modified Time
-Records where `created_time = last_modified_time` (exact match including time)
-- These are typically records that were never updated after creation
+### Scenario 1: Creation and Last Modified timestamps are exactly the same
+Records where `creation_time = last_modified_time` (exact timestamp match).
 
-### Scenario 2: Same Date, Different Time
-Records where `DATE(created_time) = DATE(last_modified_time)` but `created_time != last_modified_time`
-- These are records that were updated on the same day they were created
+### Scenario 2: Creation and Last Modified dates are the same, times differ
+Records where `DATE(creation_time) = DATE(last_modified_time)` but `creation_time != last_modified_time`.
 
-### Scenario 3: Different Dates
-Records where `DATE(created_time) != DATE(last_modified_time)`
-- These are records that were updated on a different day than creation
+### Scenario 3: Creation and Last Modified dates are different
+Records where `DATE(creation_time) != DATE(last_modified_time)`.
 
 ## Understanding the Results
 
