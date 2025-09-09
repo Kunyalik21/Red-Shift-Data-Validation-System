@@ -30,6 +30,8 @@ def send_email_with_attachment(smtp_server: str, smtp_port: int, sender: str, pa
             part.set_payload(f.read())
         encoders.encode_base64(part)
         part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(attachment_path)}"')
+        # Add Content-ID so the attachment can be referenced via cid: in the email body
+        part.add_header('Content-ID', '<report_attachment>')
         msg.attach(part)
 
     # Sanitize potential spaced app passwords (Gmail displays with spaces)

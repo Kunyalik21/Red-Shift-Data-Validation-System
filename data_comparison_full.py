@@ -2782,6 +2782,7 @@ class DatabaseComparator:
                             _red = _tdata['record_counts'].get('redshift_total', 0)
                             _miss_r = _tdata.get('missing_records', {}).get('total_missing_in_redshift', 0)
                             _miss_m = _tdata.get('missing_records', {}).get('total_missing_in_mysql', 0)
+                            _not_deleted = (_tdata.get('deletion_validation') or {}).get('not_deleted_records', 0)
                             per_table_rows += (
                                 f"<tr>"
                                 f"<td style='padding:8px 10px; white-space:nowrap;'>{_t}</td>"
@@ -2789,6 +2790,7 @@ class DatabaseComparator:
                                 f"<td style='padding:8px 10px; text-align:right;'>{_red:,}</td>"
                                 f"<td style='padding:8px 10px; text-align:right; color:#dc2626;'>{_miss_r:,}</td>"
                                 f"<td style='padding:8px 10px; text-align:right; color:#dc2626;'>{_miss_m:,}</td>"
+                                f"<td style='padding:8px 10px; text-align:right; color:#dc2626;'>{_not_deleted:,}</td>"
                                 f"</tr>"
                             )
 
@@ -2835,12 +2837,16 @@ class DatabaseComparator:
                                     <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{report['summary']['total_missing_in_mysql']:,}</b></td>
                                   </tr>
                                   <tr style='background:#ffffff;'>
-                                    <td style='padding:10px 12px;'>Failed Columns (&lt;95%)</td>
+                                    <td style='padding:10px 12px;'>Failed Columns</td>
                                     <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{failed_columns}</b></td>
+                                  </tr>
+                                  <tr style='background:#fafafa;'>
+                                    <td style='padding:10px 12px;'>Records Not Deleted (older than configured threshold)</td>
+                                    <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{sum((t.get('deletion_validation', {}) or {}).get('not_deleted_records', 0) for t in report['tables'].values()):,}</b></td>
                                   </tr>
                                 </tbody>
                               </table>
-                              <p style='margin-top:14px; font-size:13px; color:#4b5563;'>Please find the attached latest report.</p>
+                              <p style='margin-top:14px; font-size:13px; color:#4b5563;'>Please find the attached latest report. <a href='cid:report_attachment' style='color:#2563eb; text-decoration:none;'>Click here to open</a></p>
 
                               <div style='margin-top:18px;'>
                                 <h3 style='margin:0 0 8px; font-size:15px; color:#111827;'>Per-Table Summary</h3>
@@ -2852,6 +2858,7 @@ class DatabaseComparator:
                                       <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Redshift</th>
                                       <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Missing in Redshift</th>
                                       <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Missing in MySQL</th>
+                                      <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Not Deleted (old)</th>
                                     </tr>
                                   </thead>
                                   <tbody>

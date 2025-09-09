@@ -74,9 +74,9 @@ EMAIL_CONFIG = {
     'enabled': True,
     'smtp_server': 'smtp.gmail.com',
     'smtp_port': 587,
-    'sender': None,  # Loaded from env var EMAIL_SENDER
-    'password': None,  # Loaded from env var EMAIL_PASSWORD
+    'sender': 'redshiftvalidationsystem@gmail.com',  # Loaded from env var EMAIL_SENDER
+    'password': 'nhgl mzeq tqqq rrzm',  # Loaded from env var EMAIL_PASSWORD
     'recipients': [
-        'kunyalik.kanwar@salescode.ai'
+        'kunyalik.kanwar@salescode.ai','himanshu.rawat@salescode.ai'
     ]
 }
