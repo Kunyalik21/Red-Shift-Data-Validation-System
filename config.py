@@ -74,8 +74,8 @@ EMAIL_CONFIG = {
     'enabled': True,
     'smtp_server': 'smtp.gmail.com',
     'smtp_port': 587,
-    'sender': None,  # Loaded securely from env var EMAIL_SENDER
-    'password': None,  # Loaded securely from env var EMAIL_PASSWORD
+    'sender': None,  # Loaded from env var EMAIL_SENDER
+    'password': None,  # Loaded from env var EMAIL_PASSWORD
     'recipients': [
         'kunyalik.kanwar@salescode.ai'
     ]

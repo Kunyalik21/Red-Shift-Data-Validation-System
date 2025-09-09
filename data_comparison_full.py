@@ -2745,134 +2745,29 @@ class DatabaseComparator:
                         end = period.get('end_date') or 'ALL'
                         subject = f"Data Sync Report | MySQL: {self.mysql_config['database']} | Redshift: {self.redshift_config['database']} | {start} → {end}"
                         tables = ', '.join(self.tables)
-                        # Build a simple KPI table
-                        kpi_rows = f"""
-                          <tr>
-                            <td style='padding:8px 12px;'>📦 Total MySQL Records</td>
-                            <td style='padding:8px 12px; text-align:right;'><b>{report['summary']['total_mysql_records']:,}</b></td>
-                          </tr>
-                          <tr>
-                            <td style='padding:8px 12px;'>☁️ Total Redshift Records</td>
-                            <td style='padding:8px 12px; text-align:right;'><b>{report['summary']['total_redshift_records']:,}</b></td>
-                          </tr>
-                          <tr>
-                            <td style='padding:8px 12px;'>⚠️ Missing in Redshift</td>
-                            <td style='padding:8px 12px; text-align:right; color:#e53e3e;'><b>{report['summary']['total_missing_in_redshift']:,}</b></td>
-                          </tr>
-                          <tr>
-                            <td style='padding:8px 12px;'>⚠️ Missing in MySQL</td>
-                            <td style='padding:8px 12px; text-align:right; color:#e53e3e;'><b>{report['summary']['total_missing_in_mysql']:,}</b></td>
-                          </tr>
-                        """
-
-                        # Derive failed columns count from the generated stats
-                        total_columns = 0
-                        failed_columns = 0
-                        for _table_name, table_data in report['tables'].items():
-                            if 'field_comparison' in table_data and 'column_analysis' in table_data['field_comparison']:
-                                for _col, col_data in table_data['field_comparison']['column_analysis'].items():
-                                    total_columns += 1
-                                    if col_data.get('match_rate', 0) < 95:
-                                        failed_columns += 1
-
-                        # Per-table section rows
-                        per_table_rows = ""
-                        for _t, _tdata in report['tables'].items():
-                            _mysql = _tdata['record_counts'].get('mysql_total', 0)
-                            _red = _tdata['record_counts'].get('redshift_total', 0)
-                            _miss_r = _tdata.get('missing_records', {}).get('total_missing_in_redshift', 0)
-                            _miss_m = _tdata.get('missing_records', {}).get('total_missing_in_mysql', 0)
-                            per_table_rows += (
-                                f"<tr>"
-                                f"<td style='padding:8px 10px; white-space:nowrap;'>{_t}</td>"
-                                f"<td style='padding:8px 10px; text-align:right;'>{_mysql:,}</td>"
-                                f"<td style='padding:8px 10px; text-align:right;'>{_red:,}</td>"
-                                f"<td style='padding:8px 10px; text-align:right; color:#dc2626;'>{_miss_r:,}</td>"
-                                f"<td style='padding:8px 10px; text-align:right; color:#dc2626;'>{_miss_m:,}</td>"
-                                f"</tr>"
-                            )
-
                         html_body = f"""
-                        <div style='font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Arial, sans-serif; color:#1f2937; background:#f9fafb; padding:18px;'>
-                          <div style='max-width:760px; margin:0 auto; background:#ffffff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 2px 6px rgba(0,0,0,0.04);'>
-                            <div style='padding:18px 20px 10px 20px; border-bottom:1px solid #f3f4f6;'>
-                              <h2 style='margin:0; font-size:20px; color:#111827;'>Data Sync Validation Report</h2>
-                              <div style='margin-top:8px; font-size:13px;'>
-                                <span style='display:inline-block; background:#2563eb; color:#fff; padding:4px 8px; border-radius:999px;'>MySQL: {self.mysql_config['database']}</span>
-                                <span style='display:inline-block; background:#059669; color:#fff; padding:4px 8px; border-radius:999px; margin-left:6px;'>Redshift: {self.redshift_config['database']}</span>
-                              </div>
-                              <div style='margin-top:6px; font-size:13px; color:#374151;'>
-                                <b>Tables:</b> {tables}
-                              </div>
-                              <div style='margin-top:2px; font-size:12px; color:#6b7280;'>
-                                <b>Time Period:</b> {start} → {end}
-                              </div>
-                            </div>
-
-                            <div style='padding:14px 20px 20px 20px;'>
-                              <table style='border-collapse:separate; border-spacing:0; width:100%; max-width:720px; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;'>
-                                <thead>
-                                  <tr style='background:#f3f4f6;'>
-                                    <th style='text-align:left; padding:10px 12px; font-size:13px; color:#4b5563; border-bottom:1px solid #e5e7eb;'>Metric</th>
-                                    <th style='text-align:right; padding:10px 12px; font-size:13px; color:#4b5563; border-bottom:1px solid #e5e7eb;'>Value</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  <tr style='background:#ffffff;'>
-                                    <td style='padding:10px 12px;'>Total MySQL Records</td>
-                                    <td style='padding:10px 12px; text-align:right;'><b>{report['summary']['total_mysql_records']:,}</b></td>
-                                  </tr>
-                                  <tr style='background:#fafafa;'>
-                                    <td style='padding:10px 12px;'>Total Redshift Records</td>
-                                    <td style='padding:10px 12px; text-align:right;'><b>{report['summary']['total_redshift_records']:,}</b></td>
-                                  </tr>
-                                  <tr style='background:#ffffff;'>
-                                    <td style='padding:10px 12px;'>Missing in Redshift</td>
-                                    <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{report['summary']['total_missing_in_redshift']:,}</b></td>
-                                  </tr>
-                                  <tr style='background:#fafafa;'>
-                                    <td style='padding:10px 12px;'>Missing in MySQL</td>
-                                    <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{report['summary']['total_missing_in_mysql']:,}</b></td>
-                                  </tr>
-                                  <tr style='background:#ffffff;'>
-                                    <td style='padding:10px 12px;'>Failed Columns (&lt;95%)</td>
-                                    <td style='padding:10px 12px; text-align:right; color:#dc2626;'><b>{failed_columns}</b></td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                              <p style='margin-top:14px; font-size:13px; color:#4b5563;'>Please find the attached latest report.</p>
-
-                              <div style='margin-top:18px;'>
-                                <h3 style='margin:0 0 8px; font-size:15px; color:#111827;'>Per-Table Summary</h3>
-                                <table style='border-collapse:separate; border-spacing:0; width:100%; max-width:720px; border:1px solid #e5e7eb; border-radius:8px; overflow:hidden;'>
-                                  <thead>
-                                    <tr style='background:#f3f4f6;'>
-                                      <th style='text-align:left; padding:8px 10px; font-size:12px; color:#4b5563;'>Table</th>
-                                      <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>MySQL</th>
-                                      <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Redshift</th>
-                                      <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Missing in Redshift</th>
-                                      <th style='text-align:right; padding:8px 10px; font-size:12px; color:#4b5563;'>Missing in MySQL</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {per_table_rows}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
+                        <div style='font-family: Arial, sans-serif;'>
+                          <h2>Data Sync Validation Report</h2>
+                          <p><b>MySQL Database:</b> {self.mysql_config['database']} | <b>Redshift Database:</b> {self.redshift_config['database']}</p>
+                          <p><b>Tables:</b> {tables}</p>
+                          <p><b>Time Period:</b> {start} to {end}</p>
+                          <p>Latest report is attached. Summary:</p>
+                          <ul>
+                            <li>Total MySQL Records: {report['summary']['total_mysql_records']:,}</li>
+                            <li>Total Redshift Records: {report['summary']['total_redshift_records']:,}</li>
+                            <li>Missing in Redshift: {report['summary']['total_missing_in_redshift']:,}</li>
+                            <li>Missing in MySQL: {report['summary']['total_missing_in_mysql']:,}</li>
+                          </ul>
                         </div>
                         """
                         send_email_with_attachment(
                             EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'],
                             sender, password, recipients, subject, html_body, html_file
                         )
-                        logger.info(f"Email sent successfully to: {', '.join(recipients)}")
                     else:
                         logger.warning("Email not sent: missing sender/password/recipients")
             except Exception as mail_err:
                 logger.warning(f"Email send warning: {mail_err}")
-                print(f"Email send failed: {mail_err}")
             
             logger.info(f"Enhanced HTML report saved to: {html_file}")
             logger.info("Data comparison completed successfully!")
